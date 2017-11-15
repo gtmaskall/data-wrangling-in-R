@@ -1,0 +1,134 @@
+---
+title: "Extracting lists from a data frame"
+author: "G T Maskall"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+---
+
+# Introduction
+
+Whether you've read some data from JSON, or otherwise, you've ended up with these weird
+lists in columns. What do you do?
+
+We'll use a snippet of data from the Yelp challenge dataset. We've got some information
+on a business level (business_id). One of those columns is a list of attributes for
+the business. Now, you're a good data scientist so you'll be itching to extract these
+out into columns so you can use them as features for something cool and interesting.
+
+```{r, initalise_data}
+attributes <- readRDS("attributes.rds")
+```
+
+```{r, load_packages}
+library(tidyverse)
+```
+
+# Data format
+
+The data look like this:
+
+```{r, data_glimpse}
+attributes %>% glimpse
+```
+
+In order to focus on the key columns of interest, we'll just grab the business_id
+and attributes columns to reduce the clutter. They're the bits we're interested
+in and we can always join the data back up later anyway.
+
+```{r, select_cols}
+# and key things we're interested in is attributes for business_id:
+attributes %>% 
+    select(business_id, attributes) 
+# let's start testing ideas on the first element
+tmp <- attributes$attributes[1]
+
+# extracting successive elements
+tmp %>% map_chr(1)
+tmp %>% map_chr(2)
+tmp %>% map_chr(3)
+tmp %>% map_chr(4)
+```
+
+Okay, so we might be onto something here. We seem to have been able to extract 
+key:value pairs from the list. It's a start! But we don't want to have to
+manually specify list index for each row. We want to end up automatically
+generating a set of column features from whatever we've got in our list
+attributes.
+
+# Getting there
+
+We might first think of unnest. Great, this will do what we want, right?
+
+```{r, unnest_1}
+try(
+attributes %>% 
+    select(business_id, attributes) %>% 
+    unnest )
+```
+
+Okay, it didn't like that. What went wrong? We're not taking into account the presence
+of some empty attribute lists. Can we filter on the length of each? Let's try creating
+a length feature
+
+```{r, calc_length_1}
+attributes %>% 
+    select(business_id, attributes) %>% 
+    mutate(Num_attributes = length(attributes))
+```
+
+Well they're not all length 10. We know that. We've just calculated the length of
+the whole column (10 rows). Let's try again, this time using map_int to return the
+expected integers
+
+```{r, calc_length_2}
+attributes %>% 
+    select(business_id, attributes) %>% 
+    mutate(num_atts = map_int(attributes, length)) 
+```
+
+Now that's more like it! Let's try unnest again now we can filter out that pesky
+null attribute.
+
+```{r, unnest_2}
+attributes %>% 
+    select(business_id, attributes) %>% 
+    mutate(num_atts = map_int(attributes, length)) %>% 
+    filter(num_atts > 0) %>% 
+    unnest %>% 
+    separate(attributes, into = c("key", "value"), extra = "merge") 
+```
+
+This is looking much more hopeful! We have successfully extracted the first
+attribute key. The final column, the value part, happily doesn't show because
+some are fairly long.
+
+All we need to do now is to use the good old spread function from tidyr to give
+us our feature columns for our final result!
+
+# Extracting features
+
+```{r, generate_features}
+attributes_unnested <- attributes %>% 
+    select(business_id, attributes) %>% 
+    mutate(num_atts = map_int(attributes, length)) %>% 
+    filter(num_atts > 0) %>% 
+    unnest %>% 
+    separate(attributes, into = c("key", "value"), extra = "merge") %>% 
+    spread(key, value) 
+
+attributes_unnested %>% glimpse
+```
+
+We can now start to get on with our usual data cleaning. For example, what values do
+we have for "WiFi"?
+
+```{r, wifi}
+attributes_unnested %>%
+    count(WiFi)
+```
+
+# Further work
+
+As you can see, there are still some features we might want to extract further, such as
+Ambience. This is for another day, but you might decide where you want to go with that
+is to split the values out into yet more columns having, perhaps, prepended "Ambience:"
+to each subkey to generate "Ambience:romantic" and "Ambience:intimate" features, for example.
